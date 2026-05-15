@@ -510,16 +510,42 @@ var sleep=function(ms){return new Promise(function(r){setTimeout(r,ms);});};
 function resamp(c,ms){var b={};for(var i=0;i<c.length;i++){var x=c[i],k=Math.floor(x.ts/ms)*ms;if(!b[k])b[k]={ts:k,open:x.open,high:x.high,low:x.low,close:x.close};else{b[k].high=Math.max(b[k].high,x.high);b[k].low=Math.min(b[k].low,x.low);b[k].close=x.close;}}return Object.values(b).sort(function(a,b){return a.ts-b.ts;});}
 
 // Binance — all symbols passed directly as XXXUSDT
+async function fetchBinance(url) {
+  // Try direct first (works on Netlify/local), fall back to proxy for GitHub Pages
+  try {
+    var r = await fetch(url);
+    if (r.ok) return r.json();
+  } catch(e) {}
+  // CORS proxy fallback
+  var proxies = [
+    'https://api.allorigins.win/raw?url=',
+    'https://corsproxy.io/?'
+  ];
+  for (var i = 0; i < proxies.length; i++) {
+    try {
+      var r = await fetch(proxies[i] + encodeURIComponent(url));
+      if (!r.ok) continue;
+      var txt = await r.text();
+      var d = JSON.parse(txt);
+      if (d.contents) d = JSON.parse(d.contents);
+      return d;
+    } catch(e) { continue; }
+  }
+  throw new Error('All Binance proxies failed');
+}
+
 async function binanceCandles(sym,tf){
-  var r=await fetch('https://api.binance.com/api/v3/klines?symbol='+sym+'&interval='+tf+'&limit=150');
-  if(!r.ok)throw new Error('Binance '+r.status);
-  var d=await r.json();
+  var url='https://api.binance.com/api/v3/klines?symbol='+sym+'&interval='+tf+'&limit=150';
+  var d=await fetchBinance(url);
   return d.map(function(x){return{ts:+x[0],open:+x[1],high:+x[2],low:+x[3],close:+x[4]};});
 }
 
 async function binancePrice(sym){
-  try{var r=await fetch('https://api.binance.com/api/v3/ticker/24hr?symbol='+sym);if(!r.ok)return null;var d=await r.json();return{price:+d.lastPrice,change:+d.priceChangePercent};}
-  catch(e){return null;}
+  try{
+    var url='https://api.binance.com/api/v3/ticker/24hr?symbol='+sym;
+    var d=await fetchBinance(url);
+    return{price:+d.lastPrice,change:+d.priceChangePercent};
+  }catch(e){return null;}
 }
 
 // Yahoo Finance with multiple proxy fallbacks
