@@ -643,35 +643,58 @@ async function runScan(){
   var tJ=(cList.length+sList.length)*tfs.length,dJ=0;
   allSigs=[];var scanned=0;
 
-  // Crypto
-  for(var ci=0;ci<cList.length;ci++){
-    var sym=cList[ci];setProg(dJ,tJ,'Scanning '+sym+'...');var tfR={};
-    for(var ti=0;ti<tfs.length;ti++){var tf=tfs[ti];
-      try{var c=await binanceCandles(sym,tf);tfR[tf]=detectDiv(c);lg('  '+sym+' '+tf.toUpperCase()+' -> '+(tfR[tf].direction!=='none'?tfR[tf].direction.toUpperCase():'-'));}
-      catch(e){lg('  '+sym+' '+tf.toUpperCase()+' failed: '+e.message,'err');tfR[tf]={direction:'none',strength:0,bullRsi:false,bearRsi:false,bullMacd:false,bearMacd:false,emaCross:false,emaCrossDir:'none'};}
-      dJ++;await sleep(150);}
-    scanned++;var mtf=aggMTF(tfR,tfs,minA);
-    if(mtf){var pd=await binancePrice(sym);var name=symToName(sym);
-      allSigs.push(Object.assign({symbol:name,type:'crypto',price:pd?fmtP(pd.price):'--',chg:pd?pd.change:null,tvUrl:tvCryptoUrl(sym)},mtf));
-      lg('  OK '+sym+': '+mtf.direction.toUpperCase()+' str:'+mtf.strength,'ok');}
+  // Crypto — parallel batches of 5
+  var BATCH = 5;
+  for(var ci=0;ci<cList.length;ci+=BATCH){
+    var batch=cList.slice(ci,ci+BATCH);
+    setProg(dJ,tJ,'Scanning '+batch[0]+' batch...');
+    var batchResults = await Promise.all(batch.map(async function(sym){
+      var tfR={};
+      for(var ti=0;ti<tfs.length;ti++){var tf=tfs[ti];
+        try{var c=await binanceCandles(sym,tf);tfR[tf]=detectDiv(c);lg('  '+sym+' '+tf.toUpperCase()+' -> '+(tfR[tf].direction!=='none'?tfR[tf].direction.toUpperCase():'-'));}
+        catch(e){lg('  '+sym+' '+tf.toUpperCase()+' failed: '+e.message,'err');tfR[tf]={direction:'none',strength:0,bullRsi:false,bearRsi:false,bullMacd:false,bearMacd:false,emaCross:false,emaCrossDir:'none'};}
+        dJ++;
+      }
+      var mtf=aggMTF(tfR,tfs,minA);
+      var result=null;
+      if(mtf){var pd=await binancePrice(sym);var name=symToName(sym);
+        result=Object.assign({symbol:name,type:'crypto',price:pd?fmtP(pd.price):'--',chg:pd?pd.change:null,tvUrl:tvCryptoUrl(sym)},mtf);
+        lg('  OK '+sym+': '+mtf.direction.toUpperCase()+' str:'+mtf.strength,'ok');}
+      return result;
+    }));
+    batchResults.forEach(function(r){if(r){allSigs.push(r);}});
+    scanned+=batch.length;
+    setProg(dJ,tJ,'Scanned '+scanned+' of '+cList.length+' crypto...');
+    await sleep(200); // small pause between batches
   }
 
-  // Stocks
-  for(var si=0;si<sList.length;si++){
-    var sym=sList[si];setProg(dJ,tJ,'Scanning '+sym+'...');var tfR={};var lc=null,pc=null,chgPct=null;
-    for(var ti=0;ti<tfs.length;ti++){var tf=tfs[ti];
-      try{var c=await yahooCandles(sym,tf);tfR[tf]=detectDiv(c);
-        if(tf==='1d'&&c.length>=2){lc=c[c.length-1].close;pc=c[c.length-2].close;}
-        if(tf==='1d'&&c._meta){var m=c._meta;if(m.regularMarketPrice)lc=m.regularMarketPrice;if(m.regularMarketChangePercent)chgPct=m.regularMarketChangePercent;}
-        lg('  '+sym+' '+tf.toUpperCase()+' -> '+(tfR[tf].direction!=='none'?tfR[tf].direction.toUpperCase():'-'));}
-      catch(e){lg('  '+sym+' '+tf.toUpperCase()+' failed: '+e.message,'err');tfR[tf]={direction:'none',strength:0,bullRsi:false,bearRsi:false,bullMacd:false,bearMacd:false,emaCross:false,emaCrossDir:'none'};}
-      dJ++;await sleep(400);}
-    scanned++;var mtf=aggMTF(tfR,tfs,minA);
-    if(mtf){
-      var chg=chgPct!==null?chgPct:(lc&&pc?(lc/pc-1)*100:null);
-      var displayName=TICKER_NAMES[sym]||sym;
-      allSigs.push(Object.assign({symbol:displayName,type:'stock',price:lc?fmtP(lc):'--',chg:chg,tvUrl:tvStockUrl(sym)},mtf));
-      lg('  OK '+sym+': '+mtf.direction.toUpperCase()+' str:'+mtf.strength,'ok');}
+  // Stocks — parallel batches of 3
+  var SBATCH=3;
+  for(var si=0;si<sList.length;si+=SBATCH){
+    var sbatch=sList.slice(si,si+SBATCH);
+    setProg(dJ,tJ,'Scanning stocks batch '+(Math.floor(si/SBATCH)+1)+'...');
+    var sbatchResults=await Promise.all(sbatch.map(async function(sym){
+      var tfR={};var lc=null,pc=null,chgPct=null;
+      for(var ti=0;ti<tfs.length;ti++){var tf=tfs[ti];
+        try{var c=await yahooCandles(sym,tf);tfR[tf]=detectDiv(c);
+          if(tf==='1d'&&c.length>=2){lc=c[c.length-1].close;pc=c[c.length-2].close;}
+          if(tf==='1d'&&c._meta){var m=c._meta;if(m.regularMarketPrice)lc=m.regularMarketPrice;if(m.regularMarketChangePercent)chgPct=m.regularMarketChangePercent;}
+          lg('  '+sym+' '+tf.toUpperCase()+' -> '+(tfR[tf].direction!=='none'?tfR[tf].direction.toUpperCase():'-'));}
+        catch(e){lg('  '+sym+' '+tf.toUpperCase()+' failed: '+e.message,'err');tfR[tf]={direction:'none',strength:0,bullRsi:false,bearRsi:false,bullMacd:false,bearMacd:false,emaCross:false,emaCrossDir:'none'};}
+        dJ++;
+      }
+      var mtf=aggMTF(tfR,tfs,minA);
+      if(mtf){
+        var chg=chgPct!==null?chgPct:(lc&&pc?(lc/pc-1)*100:null);
+        var displayName=TICKER_NAMES[sym]||sym;
+        lg('  OK '+sym+': '+mtf.direction.toUpperCase()+' str:'+mtf.strength,'ok');
+        return Object.assign({symbol:displayName,type:'stock',price:lc?fmtP(lc):'--',chg:chg,tvUrl:tvStockUrl(sym)},mtf);
+      }
+      return null;
+    }));
+    sbatchResults.forEach(function(r){if(r)allSigs.push(r);});
+    scanned+=sbatch.length;
+    await sleep(300);
   }
 
   setProg(1,1,'Complete -- '+allSigs.length+' signal(s) found');
